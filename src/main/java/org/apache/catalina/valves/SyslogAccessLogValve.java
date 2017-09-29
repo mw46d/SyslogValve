@@ -5,9 +5,9 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -29,6 +29,7 @@ import java.net.InetAddress;
 import java.net.DatagramPacket;
 import java.net.UnknownHostException;
 import java.net.SocketException;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
@@ -41,7 +42,7 @@ import org.apache.juli.logging.LogFactory;
 
 /**
  * <p>
- * This Tomcat extension logs server access directly to a syslogd, and can 
+ * This Tomcat extension logs server access directly to a syslogd, and can
  * be used instead (or in combination) of the regular file-based access log
  * implemented in  AccessLogValve.
  * To use, copy into the server/classes directory of the Tomcat installation
@@ -65,13 +66,13 @@ import org.apache.juli.logging.LogFactory;
  * </p>
  * <p>
  * This logger can be used at the level of the Engine context (being shared
- * by all the defined hosts) or the Host context (one instance of the logger 
+ * by all the defined hosts) or the Host context (one instance of the logger
  * per host).
  * </p>
  * <p>
  * <i>TO DO: provide option for excluding logging of certain MIME types.</i>
  * </p>
- * 
+ *
  * @author Marco Walther
  */
 
@@ -178,7 +179,7 @@ public final class SyslogAccessLogValve extends AccessLogValve {
     private InetAddress address;
     private int port = 514;
     private DatagramSocket ds;
-    
+
     /**
      * Max lengths in bytes of a message. Per RFC 5424, size limits are dictated
      * by the syslog transport mapping in use. But, the practical upper limit of
@@ -201,11 +202,12 @@ public final class SyslogAccessLogValve extends AccessLogValve {
      * Host name used to identify messages from this appender.
      */
     private String localHostname;
+    private String pid;
 
     /**
      * The descriptive information about this implementation.
      */
-    protected static String info = 
+    protected static String info =
         "org.apache.catalina.valves.SyslogAccessLogValve/1.1";
 
     /**
@@ -213,13 +215,13 @@ public final class SyslogAccessLogValve extends AccessLogValve {
      */
     protected LifecycleSupport lifecycle = new LifecycleSupport(this);
 
- 
+
 
     // ------------------------------------------------------------- Properties
 
     /**
      * Gets the value of Syslog UDP packet message length
-     * 
+     *
      * @return the value of Syslog UDP packet message length
      */
     public int getMsgLength(){
@@ -228,7 +230,7 @@ public final class SyslogAccessLogValve extends AccessLogValve {
 
     /**
      * Sets the value of Syslog UDP packet message length
-     * 
+     *
      * @param argMsgLength the value to assign as the Syslog UDP packet message length
      */
     public void setMsgLength(String argMsgLength) {
@@ -245,10 +247,10 @@ public final class SyslogAccessLogValve extends AccessLogValve {
             this.msgLength = Integer.parseInt(argMsgLength);
         }
     }
- 
+
     /**
      * Gets the value of syslog target port
-     * 
+     *
      * @return the value of syslog target port
      */
     public int getPort() {
@@ -257,7 +259,7 @@ public final class SyslogAccessLogValve extends AccessLogValve {
 
     /**
      * Sets the value of syslog target port
-     * 
+     *
      * @param argPort Value to assign to this.port
      */
     public void setPort(String argPort) {
@@ -340,7 +342,7 @@ public final class SyslogAccessLogValve extends AccessLogValve {
     /**
      * Determines whether the header (timestamp & hostname) should be
      * included in the message
-     * 
+     *
      * @param header "true" or "false"
      */
     public void setHeader(String argHeader) {
@@ -357,8 +359,8 @@ public final class SyslogAccessLogValve extends AccessLogValve {
 
     /**
      * Determines whether IP host name resolution is done.
-     * 
-     * @param resolveHosts "true" or "false", if host IP resolution 
+     *
+     * @param resolveHosts "true" or "false", if host IP resolution
      * is desired or not.
      */
     public void setResolveHosts(String resolveHosts) {
@@ -370,18 +372,12 @@ public final class SyslogAccessLogValve extends AccessLogValve {
     @Override
     public void log(final CharArrayWriter msg) {
 	if (ds != null) {
-	    String packet = msg.toString();
-	    String hdr = getPacketHeader(new Date().getTime());
-
-	    if(hdr.length() > 0) {
-		StringBuffer buf = new StringBuffer(hdr);
-
-		buf.append(msg);
-		packet = buf.toString();
+	    synchronized(this) {
+		StringBuffer b1 = new StringBuffer("<" + ( facility | level ) + ">");
+		b1.append(getPacketHeader(new Date().getTime()));
+		b1.append(msg.toString());
+		write(b1.toString());
 	    }
-	    
-	    String p1 = "<" + ( facility | level ) + ">" + packet;
-	    write(p1);
 	}
     }
 
@@ -395,6 +391,29 @@ public final class SyslogAccessLogValve extends AccessLogValve {
 	    ds.close();
 	}
 	ds = null;
+    }
+
+    /**
+       Add a %P for the PID to the formats.
+     */
+    protected AccessLogElement createAccessLogElement(char pattern) {
+        switch (pattern) {
+        case 'P':
+            return new PidElement();
+	}
+
+	return super.createAccessLogElement(pattern);
+    }
+
+    /**
+     * write the PID - %P
+     */
+    protected class PidElement implements AccessLogElement {
+        @Override
+        public void addElement(CharArrayWriter buf, Date date, Request request,
+                Response response, long time) {
+            buf.append(getPid());
+        }
     }
 
     // --------------------------------------------------------- Private Methods
@@ -564,28 +583,25 @@ public final class SyslogAccessLogValve extends AccessLogValve {
 				// PRI is done at the caller
 				// dateFormat contains the VERSION 1 and the SP before and
 				// after the TIMESTAMP
-	  StringBuffer buf = new StringBuffer(dateFormat.format(new Date(timeStamp)));
+	  return String.format("%s%s %s %s   ", dateFormat.format(new Date(timeStamp)),
 				// HOSTNAME SP
-	  buf.append(getLocalHostname());
-	  buf.append(' ');
+	    getLocalHostname(),
 				// APP-NAME SP
-	  buf.append(Thread.currentThread().getName());
-	  buf.append(' ');
+	    Thread.currentThread().getName(),
 				// PROCID SP
-	  buf.append(getPid());
-	  buf.append(' ');
+	    getPid());
 				// MSGID="" SP
-	  buf.append(' ');
 				// STRUCTURED-DATA="" SP
-	  buf.append(' ');
-
-	  return buf.toString();
       }
       return "";
     }
 
     private String getPid() {
-	return ManagementFactory.getRuntimeMXBean().getName().split("@")[0];
+	if (pid == null) {
+	    pid = ManagementFactory.getRuntimeMXBean().getName().split("@")[0];
+	}
+
+	return pid;
     }
 
     private void setAddress() {
@@ -623,11 +639,9 @@ public final class SyslogAccessLogValve extends AccessLogValve {
 
     private void write(final String string) {
 	if(ds != null && address != null) {
-	    byte[] bytes = string.getBytes();
-				//
-				//  syslog packets must be less than 1024 bytes
-				//
+	    byte[] bytes = string.getBytes(StandardCharsets.UTF_8);
 	    int bytesLength = bytes.length;
+
 	    if (bytesLength >= msgLength) {
 		bytesLength = msgLength;
 	    }
