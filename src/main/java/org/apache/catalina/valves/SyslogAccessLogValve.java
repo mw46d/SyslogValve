@@ -176,8 +176,17 @@ public final class SyslogAccessLogValve extends AccessLogValve {
     private boolean resolveHosts;
 
     private InetAddress address;
-    private final int port = 514;
+    private int port = 514;
     private DatagramSocket ds;
+    
+    /**
+     * Max lengths in bytes of a message. Per RFC 5424, size limits are dictated
+     * by the syslog transport mapping in use. But, the practical upper limit of
+     * UDP over IPV4 is 65507 (65535 − 8 byte UDP header − 20 byte IP header).
+     */
+    private int msgLength = 1024;
+    protected static final int LOWER_MAX_MSG_LENGTH = 480;
+    protected static final int UPPER_MAX_MSG_LENGTH = 65507;
 
     /**
      * If true, the appender will generate the HEADER (timestamp and host name)
@@ -207,7 +216,54 @@ public final class SyslogAccessLogValve extends AccessLogValve {
  
 
     // ------------------------------------------------------------- Properties
+
+    /**
+     * Gets the value of Syslog UDP packet message length
+     * 
+     * @return the value of Syslog UDP packet message length
+     */
+    public int getMsgLength(){
+        return this.msgLength;
+    }
+
+    /**
+     * Sets the value of Syslog UDP packet message length
+     * 
+     * @param argMsgLength the value to assign as the Syslog UDP packet message length
+     */
+    public void setMsgLength(String argMsgLength) {
+        Integer intMsgLength = new Integer(argMsgLength);
+        if (intMsgLength.compareTo(UPPER_MAX_MSG_LENGTH) > 0) {
+            this.msgLength = UPPER_MAX_MSG_LENGTH;
+            log.error("Maximum allowed Syslog UDP Message Length is " + UPPER_MAX_MSG_LENGTH + " (Current: "+argMsgLength+")",
+                    new IllegalArgumentException("MsgLength is higher than RFC 5424 practical upper size limit"));
+        } else if (intMsgLength.compareTo(LOWER_MAX_MSG_LENGTH) < 0) {
+            this.msgLength = LOWER_MAX_MSG_LENGTH;
+            log.error("Minimum allowed Syslog UDP Message Length is " + LOWER_MAX_MSG_LENGTH + " (Current: "+argMsgLength+")",
+                    new IllegalArgumentException("MsgLength is lower than RFC 5424 practical lower size limit"));
+        } else {
+            this.msgLength = Integer.parseInt(argMsgLength);
+        }
+    }
  
+    /**
+     * Gets the value of syslog target port
+     * 
+     * @return the value of syslog target port
+     */
+    public int getPort() {
+        return this.port;
+    }
+
+    /**
+     * Sets the value of syslog target port
+     * 
+     * @param argPort Value to assign to this.port
+     */
+    public void setPort(String argPort) {
+        this.port = Integer.parseInt(argPort);
+    }
+
     /**
      * Gets the value of hostname
      *
@@ -572,8 +628,8 @@ public final class SyslogAccessLogValve extends AccessLogValve {
 				//  syslog packets must be less than 1024 bytes
 				//
 	    int bytesLength = bytes.length;
-	    if (bytesLength >= 1024) {
-		bytesLength = 1024;
+	    if (bytesLength >= msgLength) {
+		bytesLength = msgLength;
 	    }
 
 	    DatagramPacket packet = new DatagramPacket(bytes, bytesLength,
