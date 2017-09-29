@@ -311,9 +311,10 @@ public final class SyslogAccessLogValve extends AccessLogValve {
 
     // --------------------------------------------------------- Public Methods
 
-    public void log(final String msg) {
+    @Override
+    public void log(final CharArrayWriter msg) {
 	if (ds != null) {
-	    String packet = msg;
+	    String packet = msg.toString();
 	    String hdr = getPacketHeader(new Date().getTime());
 
 	    if(hdr.length() > 0) {
@@ -338,30 +339,6 @@ public final class SyslogAccessLogValve extends AccessLogValve {
 	    ds.close();
 	}
 	ds = null;
-    }
-
-    /**
-       Add a %P for the PID to the formats.
-     */
-    protected AccessLogElement createAccessLogElement(char pattern) {
-        switch (pattern) {
-        case 'P':
-            return new PidElement();
-	}
-
-	return super.createAccessLogElement(pattern);
-    }
-
-    /**
-     * write the PID - %P
-     */
-    protected class PidElement implements AccessLogElement {
- 
-		@Override
-		public void addElement(CharArrayWriter writer, Date arg1, Request arg2,
-				Response arg3, long arg4) {
-	         writer.append(getPid());
-		}
     }
 
     // --------------------------------------------------------- Private Methods
